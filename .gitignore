@@ -1,0 +1,8 @@
+pdf/
+png/
+result/
+target/
+*.lock
+.*
+!.gitignore
+data/
