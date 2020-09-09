@@ -1,16 +1,15 @@
-use std;
-use histogram_minimizer::pc;
 use bio;
 use dtw;
-use squiggler;
+use histogram_minimizer::pc;
 use knn_predictor::knn::KNN;
 use rayon::prelude::*;
+use squiggler;
+use std;
+use std::collections::HashMap;
 use std::fs::{read_dir, File};
 use std::io::BufRead;
 use std::io::BufReader;
 use std::path::Path;
-use fast5wrapper;
-use std::collections::HashMap;
 
 /// Get sam file from specified file. Each entry can be accessed via its id.
 /// Each entry consists of two element, flag and location.
@@ -33,13 +32,13 @@ pub fn get_sam(path: &str) -> std::io::Result<HashMap<String, (u32, usize)>> {
                 Ok(res) => res,
                 Err(_) => return None,
             };
-            let quality:usize = match contents[4].parse() {
+            let quality: usize = match contents[4].parse() {
                 Ok(res) => res,
                 Err(_) => return None,
             };
-            if quality > 10{
+            if quality > 10 {
                 Some((id, (flag, location)))
-            }else{
+            } else {
                 None
             }
         })
@@ -51,7 +50,8 @@ pub fn get_sam(path: &str) -> std::io::Result<HashMap<String, (u32, usize)>> {
 /// (template,reverse)
 pub fn setup_template_complement(path: &Path) -> std::result::Result<(String, String), ()> {
     let seq = bio::io::fasta::Reader::from_file(path).map_err(|_| ())?;
-    let reference: Vec<u8> = seq.records()
+    let reference: Vec<u8> = seq
+        .records()
         .filter_map(|e| e.ok())
         .fold(Vec::new(), |mut acc, e| {
             acc.extend_from_slice(&mut e.seq());
@@ -63,54 +63,55 @@ pub fn setup_template_complement(path: &Path) -> std::result::Result<(String, St
     Ok((temp, rev))
 }
 
-
 /// Set up template complement strand from specified fasta file.
 /// If you use fastq file, please call setup_tempate_complement_fastq instead.
 /// (template,reverse)
-pub fn setup_template_complement_autofit(path: &Path,refsize:usize) -> std::result::Result<(String, String), ()> {
+pub fn setup_template_complement_autofit(
+    path: &Path,
+    refsize: usize,
+) -> std::result::Result<(String, String), ()> {
     let seq = bio::io::fasta::Reader::from_file(path).map_err(|_| ())?;
-    let reference: Vec<u8> = seq.records()
+    let reference: Vec<u8> = seq
+        .records()
         .filter_map(|e| e.ok())
         .fold(Vec::new(), |mut acc, e| {
             acc.extend_from_slice(&mut e.seq());
             acc
         });
-    let reference = extend_vector(reference,refsize/2);
+    let reference = extend_vector(reference, refsize / 2);
     let reverse = bio::alphabets::dna::revcomp(&reference);
     let temp = String::from_utf8(reference).map_err(|_| ())?;
     let rev = String::from_utf8(reverse).map_err(|_| ())?;
-    Ok((temp,rev))
+    Ok((temp, rev))
 }
 
-fn extend_vector(text:Vec<u8>,length:usize)->Vec<u8>{
+fn extend_vector(text: Vec<u8>, length: usize) -> Vec<u8> {
     let mut result = vec![];
-    loop{
-        if result.len() < length{
+    loop {
+        if result.len() < length {
             result.append(&mut text.clone());
-        }else{
+        } else {
             break result.into_iter().take(length).collect();
         }
     }
 }
 
-
 /// deplicate and concatinate string until it reaches specified length
-pub fn extend_strand(strand:&str,len:usize)->String{
+pub fn extend_strand(strand: &str, len: usize) -> String {
     let mut result = String::new();
-    loop{
-        if result.len() < len{
-            result += strand; 
-        }else{
+    loop {
+        if result.len() < len {
+            result += strand;
+        } else {
             return result;
         }
     }
 }
 
-
 /// Convert given string to signal by using specified model and
 /// normalize it.
 pub fn convert_to_squiggle(strand: &str, model: &squiggler::Squiggler) -> Vec<f32> {
-    let sig:Vec<_> = model
+    let sig: Vec<_> = model
         .get_signal_from_fasta(&strand)
         .into_iter()
         .map(|e| e.2)
@@ -129,7 +130,8 @@ pub fn get_mode(mode: &str) -> std::result::Result<dtw::Mode, String> {
         };
         Ok(dtw::Mode::SakoeChiba(bandwidth))
     } else if mode.starts_with("Scouting") {
-        let contents: Vec<usize> = mode.split(',')
+        let contents: Vec<usize> = mode
+            .split(',')
             .skip(1)
             .filter_map(|e| e.parse().ok())
             .collect();
@@ -138,15 +140,12 @@ pub fn get_mode(mode: &str) -> std::result::Result<dtw::Mode, String> {
         } else {
             return Err("Given scouting but couldn't parse argument.".to_string());
         }
-    }else if mode.starts_with("FastSub"){
-        match mode.split(',')
-            .skip(1)
-            .nth(0)
-            .and_then(|e|e.parse().ok()){
-                Some(res) => Ok(dtw::Mode::FastSub(res)),
-                None => return Err("Not Valid radious".to_string()),
-            }
-    }else {
+    } else if mode.starts_with("FastSub") {
+        match mode.split(',').skip(1).nth(0).and_then(|e| e.parse().ok()) {
+            Some(res) => Ok(dtw::Mode::FastSub(res)),
+            None => return Err("Not Valid radious".to_string()),
+        }
+    } else {
         return Err(format!("invalid mode name:{}", mode));
     }
 }
@@ -154,11 +153,13 @@ pub fn get_mode(mode: &str) -> std::result::Result<dtw::Mode, String> {
 /// Extract events sequence from specified directry and
 /// split from 50 to 50 + querysize and its id.
 /// Note that this function doesn't normalize these events.
+#[cfg(feature = "python")]
 pub fn get_queries(
     querypath: &str,
     querysize: usize,
     takenum: usize,
 ) -> Result<Vec<(String, Vec<f32>)>, std::io::Error> {
+    use fast5wrapper;
     Ok(read_dir(&Path::new(querypath))?
         .filter_map(|e| e.ok())
         .filter_map(|e| e.path().to_str().map(|e| e.to_string()))
@@ -185,7 +186,10 @@ pub fn get_queries(
 pub fn merge_queries_and_sam<T>(
     queries: &Vec<(String, Vec<T>)>,
     sam: &HashMap<String, (u32, usize)>,
-) -> Vec<(Vec<T>, u32, usize)> where T:Copy {
+) -> Vec<(Vec<T>, u32, usize)>
+where
+    T: Copy,
+{
     queries
         .into_iter()
         .filter_map(|&(ref id, ref query)| {
@@ -195,10 +199,7 @@ pub fn merge_queries_and_sam<T>(
         .collect()
 }
 
-/// Get dataset from specified queries and template, reverse strand
-/// ,mode, refsize, power, metric and reference size.
-/// for my daily use only.
-/// (correct score, uncorrect score)
+/// Get dataset from specified queries and template, reverse strand ,mode, refsize, power, metric and reference size.
 pub fn get_dataset(
     queries: &Vec<(Vec<f32>, u32, usize)>,
     temp: &Vec<f32>,
@@ -211,34 +212,29 @@ pub fn get_dataset(
 ) -> Vec<(f64, f64)> {
     queries
         .par_iter()
-        .map(|&(ref query,flag,location)|
-             if flag == 0{
-                 (query,flag,location)
-             }else{
-                 (query,flag,if rev.len() > location + refsize { rev.len()-location-refsize}else{0})
-             })
+        .map(|&(ref query, flag, location)| {
+            if flag == 0 {
+                (query, flag, location)
+            } else {
+                (
+                    query,
+                    flag,
+                    if rev.len() > location + refsize {
+                        rev.len() - location - refsize
+                    } else {
+                        0
+                    },
+                )
+            }
+        })
         .filter_map(|(query, flag, location)| {
             let pos_ref = if flag == 0 { temp } else { rev };
             let neg_ref = if flag == 0 { rev } else { temp };
             if let Some(pos) = get_score(
-                &query,
-                location,
-                pos_ref,
-                refsize,
-                querysize,
-                mode,
-                power,
-                metric,
+                &query, location, pos_ref, refsize, querysize, mode, power, metric,
             ) {
                 if let Some(neg) = get_score(
-                    &query,
-                    location,
-                    neg_ref,
-                    refsize,
-                    querysize,
-                    mode,
-                    power,
-                    metric,
+                    &query, location, neg_ref, refsize, querysize, mode, power, metric,
                 ) {
                     Some((pos, neg))
                 } else {
@@ -316,14 +312,7 @@ pub fn cross_validation(
         (elonged_temp, elonged_rev)
     };
     let dataset = get_dataset(
-        queries,
-        &temp,
-        &rev,
-        refsize,
-        querysize,
-        mode,
-        power,
-        metric,
+        queries, &temp, &rev, refsize, querysize, mode, power, metric,
     );
     validate(&dataset, model, k)
 }
@@ -470,46 +459,43 @@ pub fn parse_events(file: &Path) -> std::io::Result<Vec<Vec<(f32, f32, usize, us
     Ok(result)
 }
 
-
 /// Parse given file into events stream.
-pub fn parse_event(file: &Path) -> std::io::Result<Vec<(f32, f32, usize, usize)>>{
+pub fn parse_event(file: &Path) -> std::io::Result<Vec<(f32, f32, usize, usize)>> {
     Ok(BufReader::new(File::open(file)?)
-       .lines()
-       .filter_map(|e| e.ok())
-       .filter_map(|e|{
-           let contents = e.split(',').collect::<Vec<_>>();
-           if contents.len() < 4{
-               return None
-           }
-           let mean: f32 = match contents[0].parse() {
-               Ok(res) => res,
-               Err(_) => return None,
-           };
-           let sd: f32 = match contents[1].parse() {
-               Ok(res) => res,
-               Err(_) => return None,
-           };
-           let index: f32 = match contents[2].parse() {
-               Ok(res) => res,
-               Err(_) => return None,
-           };
-           let length: f32 = match contents[3].parse() {
-               Ok(res) => res,
-               Err(_) => return None,
-           };
-           Some((mean,sd,index as usize,length as usize))
-       })
-       .collect())
+        .lines()
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let contents = e.split(',').collect::<Vec<_>>();
+            if contents.len() < 4 {
+                return None;
+            }
+            let mean: f32 = match contents[0].parse() {
+                Ok(res) => res,
+                Err(_) => return None,
+            };
+            let sd: f32 = match contents[1].parse() {
+                Ok(res) => res,
+                Err(_) => return None,
+            };
+            let index: f32 = match contents[2].parse() {
+                Ok(res) => res,
+                Err(_) => return None,
+            };
+            let length: f32 = match contents[3].parse() {
+                Ok(res) => res,
+                Err(_) => return None,
+            };
+            Some((mean, sd, index as usize, length as usize))
+        })
+        .collect())
 }
-
 
 /// Asess if the given query is actual event stream
-pub fn is_actual_event(data:&[f32],thr:f32)->bool{
-    let max = data.iter().fold(0.,|a,&b| if a > b { a } else { b });
-    let min = data.iter().fold(10000.,|a,&b| if a > b { b } else { a });
-    (max-min) > thr
+pub fn is_actual_event(data: &[f32], thr: f32) -> bool {
+    let max = data.iter().fold(0., |a, &b| if a > b { a } else { b });
+    let min = data.iter().fold(10000., |a, &b| if a > b { b } else { a });
+    (max - min) > thr
 }
-
 
 /// Get signals from the given directly.
 pub fn get_signals(
@@ -517,32 +503,36 @@ pub fn get_signals(
     querysize: usize,
     takenum: usize,
 ) -> Result<Vec<(String, Vec<u32>)>, std::io::Error> {
-    eprintln!("{}",querypath);
+    eprintln!("{}", querypath);
     Ok(read_dir(&Path::new(querypath))?
-       .filter_map(|e| e.ok())
-       .map(|e| e.path())
-       .filter_map(|e|{
-           let f = match File::open(e){
-               Ok(res) => res,
-               Err(why) => {eprintln!("{:?}",why);return None},
-           };
-           let contents:Vec<_> = BufReader::new(&f)
-               .lines()
-               .filter_map(|e|e.ok()).collect();
-           if contents.len() < 2500 {
-               return None;
-           }
-           let id = match contents[0].split(':').nth(0){
-               Some(res) => res,
-               None => "mock",
-           }.to_string();
-           let signals:Vec<_> = contents[1..].into_iter()
-               .take(querysize)
-               .filter_map(|e|e.parse().ok())
-               .collect();
-           Some((id,signals))})
-       .take(takenum)
-       .collect())
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter_map(|e| {
+            let f = match File::open(e) {
+                Ok(res) => res,
+                Err(why) => {
+                    eprintln!("{:?}", why);
+                    return None;
+                }
+            };
+            let contents: Vec<_> = BufReader::new(&f).lines().filter_map(|e| e.ok()).collect();
+            if contents.len() < 2500 {
+                return None;
+            }
+            let id = match contents[0].split(':').nth(0) {
+                Some(res) => res,
+                None => "mock",
+            }
+            .to_string();
+            let signals: Vec<_> = contents[1..]
+                .into_iter()
+                .take(querysize)
+                .filter_map(|e| e.parse().ok())
+                .collect();
+            Some((id, signals))
+        })
+        .take(takenum)
+        .collect())
 }
 
 /// Get signals from the given directly.
@@ -551,43 +541,46 @@ pub fn get_signals_with_filename(
     querysize: usize,
     takenum: usize,
 ) -> Result<Vec<(std::path::PathBuf, Vec<u32>)>, std::io::Error> {
-    eprintln!("{}",querypath);
+    eprintln!("{}", querypath);
     Ok(read_dir(&Path::new(querypath))?
-       .filter_map(|e|e.ok())
-       .map(|e|e.path())
-       .filter(|e|e.is_file())
-       .filter_map(|e|{
-           if let Some(ext) =  e.extension(){
-               if ext != "dat" {
-                   return None
-               }
-           }
-           let f = match File::open(e.clone()){
-               Ok(res) => res,
-               Err(why) => {eprintln!("{:?}",why);return None},
-           };
-           let contents:Vec<_> = BufReader::new(&f)
-               .lines()
-               .filter_map(|e|e.ok()).collect();
-           if contents.len() < 2500 {
-               return None;
-           }
-           let signals:Vec<_> = contents[1..].into_iter()
-               .take(querysize)
-               .filter_map(|e|e.parse().ok())
-               .collect();
-           Some((e,signals))})
-       .take(takenum)
-       .collect())
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|e| e.is_file())
+        .filter_map(|e| {
+            if let Some(ext) = e.extension() {
+                if ext != "dat" {
+                    return None;
+                }
+            }
+            let f = match File::open(e.clone()) {
+                Ok(res) => res,
+                Err(why) => {
+                    eprintln!("{:?}", why);
+                    return None;
+                }
+            };
+            let contents: Vec<_> = BufReader::new(&f).lines().filter_map(|e| e.ok()).collect();
+            if contents.len() < 2500 {
+                return None;
+            }
+            let signals: Vec<_> = contents[1..]
+                .into_iter()
+                .take(querysize)
+                .filter_map(|e| e.parse().ok())
+                .collect();
+            Some((e, signals))
+        })
+        .take(takenum)
+        .collect())
 }
-
 
 /// Get GC content of the given reference
-pub fn get_gc_content(genome:&str)->f32{
-    let gc = genome.matches(|e| e =='G' || e == 'C' || e == 'g' || e == 'c').count();
+pub fn get_gc_content(genome: &str) -> f32 {
+    let gc = genome
+        .matches(|e| e == 'G' || e == 'C' || e == 'g' || e == 'c')
+        .count();
     gc as f32 / genome.len() as f32
 }
-
 
 #[derive(Clone, Copy, Debug)]
 /// A struct to express a event after segmentation for raw signal.
@@ -595,11 +588,11 @@ pub fn get_gc_content(genome:&str)->f32{
 pub struct Event {
     /// The mean value of this events.
     pub mean: f64,
-    /// The standard deviation 
+    /// The standard deviation
     pub stdv: f64,
     /// The start index from the start of the raw signal.
     pub start: usize,
-     /// The end index from the start of the raw signal.
+    /// The end index from the start of the raw signal.
     pub length: usize,
 }
 use std::fmt;
@@ -612,7 +605,7 @@ impl fmt::Display for Event {
         )
     }
 }
-fn compute_sum_sumsq(data: &[u32]) -> (Vec<u64>, Vec<u64>){
+fn compute_sum_sumsq(data: &[u32]) -> (Vec<u64>, Vec<u64>) {
     // compute accumulate sum and squared sum.
     let (mut sum, mut sumsq) = (
         Vec::with_capacity(data.len()),
@@ -630,7 +623,7 @@ fn compute_sum_sumsq(data: &[u32]) -> (Vec<u64>, Vec<u64>){
 }
 
 const EPSILON: f64 = 0.000000000000000000000000001;
-fn compute_tstat(sums: &[u64], sumsqs: &[u64], window: usize) -> Vec<f64>{
+fn compute_tstat(sums: &[u64], sumsqs: &[u64], window: usize) -> Vec<f64> {
     // compute t-statistics value for each successive window.
     (0..sums.len())
         .map(|i| {
@@ -726,71 +719,86 @@ fn short_long_peak_detector(
 /// Trim signal assumed as a noise front of the query.
 /// To do that, the difference of signals is first calculate,
 /// then, skip the signal while the differences are few.
-pub fn trim_front(signal:&Vec<u32>,thr:u32,count:usize)->usize{
+pub fn trim_front(signal: &Vec<u32>, thr: u32, count: usize) -> usize {
     let mut good_so_far = 0;
-    let location = signal.windows(2).into_iter()
-        .map(|e|if e[1] > e[0] { e[1] - e[0] }else{ e[0] - e[1] })
-        .take_while(|diff|{
-            good_so_far += if diff > &thr { 1 }else{0};
+    let location = signal
+        .windows(2)
+        .into_iter()
+        .map(|e| {
+            if e[1] > e[0] {
+                e[1] - e[0]
+            } else {
+                e[0] - e[1]
+            }
+        })
+        .take_while(|diff| {
+            good_so_far += if diff > &thr { 1 } else { 0 };
             good_so_far < count
-        }).count();
-    if location > signal.len(){
+        })
+        .count();
+    if location > signal.len() {
         return signal.len();
-    }else{
+    } else {
         location
     }
 }
 
-
 /// Trim signal assumed as a noise front of the query.
 /// To do that, the difference of signals is first calculate,
 /// then, skip the signal while the differences are few.
-pub fn trim_front_vec(signal:&[i32],thr:u32,count:usize)->Vec<u32>{
+pub fn trim_front_vec(signal: &[i32], thr: u32, count: usize) -> Vec<u32> {
     let thr = thr as i32;
     let mut good_so_far = 0;
-    let position = signal.windows(2).into_iter()
-        .map(|e|(e[1] - e[0]).abs())
-        .take_while(|diff|{
-            good_so_far += if diff > &thr { 1 }else{0};
+    let position = signal
+        .windows(2)
+        .into_iter()
+        .map(|e| (e[1] - e[0]).abs())
+        .take_while(|diff| {
+            good_so_far += if diff > &thr { 1 } else { 0 };
             good_so_far < count
-        }).count();
+        })
+        .count();
     if position >= signal.len() {
         vec![]
-    }else{
-        let (median,median_of_dev) = get_median_median_of_dev(&signal[position..]);
-        signal[position..].iter().filter(|&e| (e - median) < 7 * median_of_dev).map(|&e|e as u32).collect()
+    } else {
+        let (median, median_of_dev) = get_median_median_of_dev(&signal[position..]);
+        signal[position..]
+            .iter()
+            .filter(|&e| (e - median) < 7 * median_of_dev)
+            .map(|&e| e as u32)
+            .collect()
     }
 }
 
-fn get_median_median_of_dev(signal:&[i32])->(i32,i32){
-    let mut signal:Vec<_> = signal.iter().collect();
+fn get_median_median_of_dev(signal: &[i32]) -> (i32, i32) {
+    let mut signal: Vec<_> = signal.iter().collect();
     let len = signal.len();
     signal.sort();
-    let median = if len % 2 == 0{
-        (signal[len/2-1] + signal[len/2])/2
-    }else{
-        *signal[len/2]
+    let median = if len % 2 == 0 {
+        (signal[len / 2 - 1] + signal[len / 2]) / 2
+    } else {
+        *signal[len / 2]
     };
-    let mut devs:Vec<_> = signal.iter().map(|&e| (e-median).abs()).collect();
+    let mut devs: Vec<_> = signal.iter().map(|&e| (e - median).abs()).collect();
     devs.sort();
-    if len % 2 == 0{
-        (median,(devs[len/2-1] + devs[len/2])/2)
-    }else{
-        (median,devs[len/2])
+    if len % 2 == 0 {
+        (median, (devs[len / 2 - 1] + devs[len / 2]) / 2)
+    } else {
+        (median, devs[len / 2])
     }
 }
-/// This is a clone from ONT MinKNOW Core cpp source code. 
+/// This is a clone from ONT MinKNOW Core cpp source code.
 pub fn event_detect_mult_ttest(
     data: &[u32],
     windows: &[usize; 2],
     thresholds: &[f64; 2],
     peak_hight: f64,
-) -> Vec<Event>{
+) -> Vec<Event> {
     let (sums, sumsqs) = compute_sum_sumsq(&data);
     let len = data.len();
     if len == 0 {
         vec![]
-    }else if len <= 2 * windows[1].max(windows[0]) as usize {
+    } else if len <= 2 * windows[1].max(windows[0]) as usize {
         let len = data.len() as f64;
         let mean = sums[0] as f64 / len;
         let stdv = (sumsqs[0] as f64 / len - mean.powi(2)).sqrt();

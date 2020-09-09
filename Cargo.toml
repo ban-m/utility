@@ -2,9 +2,15 @@
 name = "utility"
 version = "0.1.0"
 authors = ["ban-m <ban-m@g.ecc.u-tokyo.ac.jp>"]
+edition = "2018"
+
+
+[features]
+python = ["fast5wrapper"]
+
 
 [dependencies]
-fast5wrapper = {path = "../fast5wrapper"}
+fast5wrapper = {path = "../fast5wrapper", optional=true}
 squiggler = {path = "../squiggler"}
 dtw = {path = "../dtw"}
 rand = "*"
